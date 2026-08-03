@@ -21,7 +21,7 @@ bitflags! {
         const INSTANT_DEATH_AP = 0x0080;
         const INSTANT_DEATH_FC = 0x0100;
 
-        const UNRATED = Self::AUTOPLAY.bits() | Self::NO_SHADER.bits();
+        const UNRATED = Self::NO_SHADER.bits();
     }
 }
 

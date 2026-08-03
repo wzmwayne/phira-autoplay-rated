@@ -479,7 +479,7 @@ impl GameScene {
                     let combo_top = btm + 0.01;
                     self.chart
                         .with_element(ui, res, UIElement::Combo, None, (0., combo_top + unit_h * 0.2), |ui, c| {
-                            ui.text(if res.config.autoplay() { "AUTOPLAY" } else { "COMBO" })
+                            ui.text("COMBO")
                                 .pos(0., combo_top)
                                 .anchor(0.5, 0.)
                                 .size(0.4)
@@ -502,7 +502,7 @@ impl GameScene {
                     let ct = ui.text("COMBO").size(0.4).measure().center();
                     let combo_top = btm + 0.01 + ct.y;
                     self.chart.with_element(ui, res, UIElement::Combo, None, (0., combo_top), |ui, c| {
-                        ui.text(if res.config.autoplay() { "AUTOPLAY" } else { "COMBO" })
+                        ui.text("COMBO")
                             .pos(0., combo_top)
                             .anchor(0.5, 0.5)
                             .size(0.4)

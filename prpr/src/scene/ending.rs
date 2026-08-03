@@ -560,7 +560,6 @@ impl Scene for EndingScene {
                 (Mods::FADE_IN, 2),
                 (Mods::NIGHTCORE, 3),
                 (Mods::RAINBOW, 4),
-                (Mods::AUTOPLAY, 5),
                 (Mods::NO_SHADER, 6),
             ]
             .into_iter()
