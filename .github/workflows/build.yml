@@ -1,4 +1,4 @@
-name: Build
+name: Build Android
 
 on:
   push:
@@ -8,10 +8,11 @@ on:
 
 env:
   PRPR_AVC_FFMPEG_VERSION: 20260309_v0
+  NDK_VERSION: "26.3.11579264"
 
 jobs:
-  build-linux:
-    name: Build Linux x86_64 (release)
+  build-android:
+    name: Build Android native libs (arm64 + armv7)
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -29,15 +30,40 @@ jobs:
       - name: Setup Rust toolchain
         run: |
           rustup toolchain install
-          rustup target add x86_64-unknown-linux-gnu
+          rustup target add aarch64-linux-android armv7-linux-androideabi
 
-      - name: Download FFmpeg static libs
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install NDK
         run: |
-          mkdir -p prpr-avc/static-lib/x86_64-unknown-linux-gnu
-          curl -fL --retry 3 \
-            -o prpr-avc-static-lib.tar.gz \
-            https://github.com/TeamFlos/prpr-avc-ffmpeg/releases/download/${PRPR_AVC_FFMPEG_VERSION}/x86_64-unknown-linux-gnu.tar.gz
-          tar -xzf prpr-avc-static-lib.tar.gz -C prpr-avc/static-lib/x86_64-unknown-linux-gnu
+          sdkmanager --install "ndk;${NDK_VERSION}" --sdk_root="$ANDROID_HOME"
+          echo "NDK=$ANDROID_HOME/ndk/${NDK_VERSION}" >> "$GITHUB_ENV"
+
+      - name: Configure Cargo for Android targets
+        run: |
+          NDK_TOOLS="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          {
+            echo "CC_aarch64_linux_android=$NDK_TOOLS/aarch64-linux-android21-clang"
+            echo "CXX_aarch64_linux_android=$NDK_TOOLS/aarch64-linux-android21-clang++"
+            echo "AR_aarch64_linux_android=$NDK_TOOLS/llvm-ar"
+            echo "RANLIB_aarch64_linux_android=$NDK_TOOLS/llvm-ranlib"
+            echo "CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER=$NDK_TOOLS/aarch64-linux-android21-clang"
+            echo "CC_armv7_linux_androideabi=$NDK_TOOLS/armv7a-linux-androideabi21-clang"
+            echo "CXX_armv7_linux_androideabi=$NDK_TOOLS/armv7a-linux-androideabi21-clang++"
+            echo "AR_armv7_linux_androideabi=$NDK_TOOLS/llvm-ar"
+            echo "RANLIB_armv7_linux_androideabi=$NDK_TOOLS/llvm-ranlib"
+            echo "CARGO_TARGET_ARMV7_LINUX_ANDROIDEABI_LINKER=$NDK_TOOLS/armv7a-linux-androideabi21-clang"
+          } >> "$GITHUB_ENV"
+
+      - name: Download FFmpeg static libs (android)
+        run: |
+          for t in aarch64-linux-android armv7-linux-androideabi; do
+            mkdir -p "prpr-avc/static-lib/$t"
+            curl -fL --retry 3 -o "$t.tar.gz" \
+              "https://github.com/TeamFlos/prpr-avc-ffmpeg/releases/download/${PRPR_AVC_FFMPEG_VERSION}/$t.tar.gz"
+            tar -xzf "$t.tar.gz" -C "prpr-avc/static-lib/$t"
+          done
 
       - name: Cache
         uses: Swatinem/rust-cache@v2
@@ -45,17 +71,19 @@ jobs:
           cache-on-failure: "true"
           cache-all-crates: "true"
 
-      - name: Build
+      - name: Build native libraries
         run: |
-          cargo build --release -p phira-main
+          cargo build --release -p phira \
+            --target aarch64-linux-android \
+            --target armv7-linux-androideabi
 
-      - name: Upload binary
+      - name: Upload libraries
         uses: actions/upload-artifact@v4
         with:
-          name: phira-autoplay-rated-linux-x86_64
+          name: phira-android-libs
           path: |
-            target/release/phira-main
-            target/release/phira-main.d
+            target/aarch64-linux-android/release/libphira.so
+            target/armv7-linux-androideabi/release/libphira.so
 
       - name: Show build info
-        run: ls -lh target/release/phira-main
+        run: ls -lh target/*/release/libphira.so
