@@ -1,0 +1,119 @@
+name: Build APK
+
+on:
+  workflow_dispatch:
+
+env:
+  PRPR_AVC_FFMPEG_VERSION: 20260730_v0
+  PHIRA_VERSION: v0.8.1
+
+jobs:
+  build-apk:
+    name: Build modified Phira APKs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Rust
+        run: |
+          rustup toolchain install
+          rustup target add aarch64-linux-android armv7-linux-androideabi
+
+      - name: Setup NDK
+        uses: nttld/setup-ndk@v1
+        with:
+          ndk-version: r26d
+
+      - name: Configure Cargo toolchain
+        run: |
+          BIN="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          {
+            echo "CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER=$BIN/aarch64-linux-android21-clang++"
+            echo "CARGO_TARGET_ARMV7_LINUX_ANDROIDEABI_LINKER=$BIN/armv7a-linux-androideabi21-clang++"
+            echo "CC_aarch64_linux_android=$BIN/aarch64-linux-android21-clang"
+            echo "CXX_aarch64_linux_android=$BIN/aarch64-linux-android21-clang++"
+            echo "CC_armv7_linux_androideabi=$BIN/armv7a-linux-androideabi21-clang"
+            echo "CXX_armv7_linux_androideabi=$BIN/armv7a-linux-androideabi21-clang++"
+            echo "AR_aarch64_linux_android=$BIN/llvm-ar"
+            echo "AR_armv7_linux_androideabi=$BIN/llvm-ar"
+            echo "RANLIB_aarch64_linux_android=$BIN/llvm-ranlib"
+            echo "RANLIB_armv7_linux_androideabi=$BIN/llvm-ranlib"
+          } >> "$GITHUB_ENV"
+
+      - name: Download FFmpeg static libs
+        run: |
+          for t in aarch64-linux-android armv7-linux-androideabi; do
+            mkdir -p "prpr-avc/static-lib/$t"
+            curl -fL --retry 3 -o "$t.tar.gz" \
+              "https://github.com/TeamFlos/prpr-avc-ffmpeg/releases/download/${PRPR_AVC_FFMPEG_VERSION}/$t.tar.gz"
+            tar -xzf "$t.tar.gz" -C "prpr-avc/static-lib/$t"
+          done
+
+      - name: Cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: "true"
+          cache-all-crates: "true"
+
+      - name: Build native libs
+        run: cargo build --release -p phira --target aarch64-linux-android --target armv7-linux-androideabi
+
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Android SDK build-tools
+        uses: android-actions/setup-android@v3
+      - name: Install build-tools
+        run: yes | sdkmanager --install "build-tools;34.0.0" --sdk_root="$ANDROID_HOME"
+
+      - name: Download official APKs
+        run: |
+          curl -fL --retry 3 -o arm64.apk \
+            "https://github.com/TeamFlos/phira/releases/download/${PHIRA_VERSION}/Phira-android-arm64-v8a-${PHIRA_VERSION}.apk"
+          curl -fL --retry 3 -o armv7.apk \
+            "https://github.com/TeamFlos/phira/releases/download/${PHIRA_VERSION}/Phira-android-armeabi-v7a-${PHIRA_VERSION}.apk"
+
+      - name: Install zip
+        run: sudo apt-get update && sudo apt-get install -y zip
+
+      - name: Replace libphira.so and re-sign APKs
+        run: |
+          set -euxo pipefail
+          BT="$ANDROID_HOME/build-tools/34.0.0"
+          keytool -genkeypair -v -keystore keystore.jks -alias phira \
+            -keyalg RSA -keysize 2048 -validity 10000 \
+            -storepass phiramod -keypass phiramod \
+            -dname "CN=phira-mod, OU=phira, O=phira, L=city, ST=state, C=CN"
+
+          # ABI dir in APK -> cargo target dir
+          declare -A MAP=( [arm64-v8a]=aarch64-linux-android [armeabi-v7a]=armv7-linux-androideabi )
+          for abi in "${!MAP[@]}"; do
+            src="arm64.apk"
+            [ "$abi" = "armeabi-v7a" ] && src="armv7.apk"
+            tgt="${MAP[$abi]}"
+            rm -rf apk && mkdir apk
+            unzip -q "$src" -d apk
+            cp "target/$tgt/release/libphira.so" "apk/lib/$abi/libphira.so"
+            (cd apk && zip -q -r -9 ../unsigned.apk .)
+            "$BT/zipalign" -f 4 unsigned.apk aligned.apk
+            "$BT/apksigner" sign --ks keystore.jks --ks-pass pass:phiramod \
+              --key-pass pass:phiramod --out "phira-mod-$abi.apk" aligned.apk
+          done
+
+      - name: Verify
+        run: |
+          for f in phira-mod-arm64-v8a.apk phira-mod-armeabi-v7a.apk; do
+            ls -lh "$f"
+            "$ANDROID_HOME/build-tools/34.0.0/apksigner" verify --verbose "$f" | head -3
+          done
+
+      - name: Upload APKs
+        uses: actions/upload-artifact@v4
+        with:
+          name: phira-mod-apks
+          path: |
+            phira-mod-arm64-v8a.apk
+            phira-mod-armeabi-v7a.apk
